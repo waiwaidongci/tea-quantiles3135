@@ -10,6 +10,9 @@
 ## 功能与方法
 - 茶样批次、浸出观测录入/编辑/删除；重名记录与非法数值明确拒绝。
 - 分位数、ECDF与按批bootstrap中位数区间。中位数置信区间描述估计不确定性，不是下一份茶样的预测区间。
+- 仪器校准与合并分布：不同仪器测的含水率不直接混算。发布整版线性校准表（y=斜率·x+截距，附适用区间），合并研究把多批茶样换算到指定仪器后生成合并分布。
+- 换算规则：每步须落在该步适用区间（闭区间）内，同一路径不重复经过仪器；可用路径取步数最少，并列按仪器编号序列字典序取首条；最短路径结果相差超过0.01个百分点或无可用路径的茶样单列排除，不计入分布分母。
+- 换算及排除明细随分布留档，纳入数与分布分母一致；研究排队即冻结一整版校准表与全部输入，之后发布新版不影响排队研究，旧研究按冻结快照重跑结果与明细一致。
 - 每次运行冻结参数、观测和SHA256。Redis任务由独立worker计算，写DB与共享产物卷；输入修改不会改写历史结果。
 - 负责人复核不可覆盖；审计记录登录、数据改动、排队、复核与导出；240请求/分钟限流、全局可恢复错误。
 
@@ -46,7 +49,7 @@ docker compose exec -T backend python -m scripts.seed_demo
 |数据库|PostgreSQL16|
 |任务|Redis7持久队列，Python独立worker，心跳healthcheck|
 
-`frontend/src/`分api、stores、types、components/common、hooks、pages、router、utils、constants；`backend/src/`分config、models、schemas、services、controllers、routes、middlewares、utils、constants；`backend/scripts/seed_demo.py`自然键插入、重复不覆盖修改；`backend/migrations/README.md`说明schema版本。
+`frontend/src/`分api、stores、types、components/common、hooks、pages、router、utils、constants；`backend/src/`分config、models、schemas、services、controllers、routes、middlewares、utils、constants；`backend/scripts/seed_demo.py`自然键插入、重复不覆盖修改；`backend/migrations/README.md`说明schema版本。校准合并链路：校准表版本与条目（CalibrationVersion/CalibrationEntry）、合并研究（MergedDistributionRun）经 `services/conversion.py` 路径搜索、`services/merged_algorithm.py` 合并分布计算，worker 监听 `merged-queue`；前端「校准合并」页发布校准表、发起合并研究，「#merged/{id}」页查看换算依据与排除明细。`backend/tests/` 覆盖区间失效、最短路径分歧、发布撞上排队与分母一致。
 
 环境变量 `.env.example`：COMPOSE_PROJECT_NAME、FRONTEND_PORT、BACKEND_PORT、DB_PORT、DB_PASSWORD、JWT_SECRET、SEED_DEMO。开发时在本地venv安装backend/requirements.txt，设置DATABASE_URL、REDIS_URL、JWT_SECRET再运行uvicorn；前端开发经Nginx代理 `/api/` 到不带前缀的API。
 
@@ -54,6 +57,8 @@ docker compose exec -T backend python -m scripts.seed_demo
 
 ## 算法输入、失败态与复现
 输入为选定批次全部观测和参数，输出核心数值、明细、解释；参数经后端严格白名单和范围验证。中位数置信区间描述估计不确定性，不是下一份茶样的预测区间。。空批次拒绝；不完整字段/非有限数/非法计数拒绝；常量相关列与不足样本使任务failed并保留错误。固定seed42、输入checksum相同可复现。独立oracle：按线性插值手算分位数；固定seed重采样复现；常量与空组边界。
+
+校准合并：合并研究输入为所选批次含水率观测、各批实测仪器、目标仪器与重采样次数；排队即冻结当前最新整版校准表写入快照并计算SHA256，worker只依据快照换算。逐样本先枚举全部不重复经过仪器的可用路径（逐步校验适用区间），取步数最少者；并列最短路径结果相差（round到9位小数）严格超过0.01个百分点则该样本排除，否则按仪器编号序列字典序取首条。换算后纳入不足3份任务failed；排除样本（无可用路径/最短路径分歧/数值非法）单列留档，分布分母=纳入数。种子数据含演示校准表v1（M0基准，M1/M2/M3条目，区间[0,15]）。
 
 已知边界：小型本地研究应用，使用合成数据，不含企业SSO与外发邮件；结果由人工复核，不自动执行业务决策；单worker恢复queued/running任务，数据库与Redis间未采用分布式事务。以当前测试目录TESTING.md记录实际验证结果。
 

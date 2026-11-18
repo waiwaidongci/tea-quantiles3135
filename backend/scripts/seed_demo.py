@@ -6,8 +6,24 @@ from src.config.domain import DOMAIN
 from src.models.user import User
 from src.models.study import Study
 from src.models.observation import Observation
-from src.models import run,review,audit
+from src.models.calibration import CalibrationVersion,CalibrationEntry
+from src.models import run,review,audit,merged
 from src.utils.security import hash_password
+from src.utils.serializers import now,checksum
+
+DEMO_CALIBRATION=[
+    {'from_instrument':'M1','to_instrument':'M0','slope':0.98,'intercept':0.12,'lo':0,'hi':15},
+    {'from_instrument':'M2','to_instrument':'M1','slope':1.01,'intercept':-0.05,'lo':0,'hi':15},
+    {'from_instrument':'M2','to_instrument':'M0','slope':1.02,'intercept':0.0,'lo':0,'hi':15},
+    {'from_instrument':'M3','to_instrument':'M2','slope':1.0,'intercept':0.08,'lo':0,'hi':15},
+]
+
+def seed_calibration(db):
+    if db.scalar(select(CalibrationVersion.id).limit(1)): return
+    version=CalibrationVersion(note='初始演示校准表（仪器 M0 为基准口径）',author='seed',
+        checksum=checksum(DEMO_CALIBRATION),created_at=now())
+    db.add(version);db.flush()
+    for e in DEMO_CALIBRATION: db.add(CalibrationEntry(version_id=version.id,**e))
 
 def seed():
     Base.metadata.create_all(engine)
@@ -37,6 +53,7 @@ def seed():
                 key=f'DEMO-{k+1}-{n+1:04}'
                 if not db.scalar(select(Observation.id).where(Observation.study_id==study.id,Observation.source_key==key)):
                     db.add(Observation(study_id=study.id,source_key=key,values=values))
+        seed_calibration(db)
         db.commit()
         counts={model.__tablename__:db.scalar(select(func.count()).select_from(model)) for model in (User,Study,Observation)}
         print(json.dumps(counts));return counts
